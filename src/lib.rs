@@ -64,17 +64,54 @@ fn cpu_count() -> usize {
 // INTERNAL DATA STRUCTURES
 // ================================================================================================
 
-/// Entry in a bucket containing hash, key, and value
-struct Entry<K, V> {
-    hash: u64, // Highest bit indicates if entry is initialized, remaining 63 bits are actual hash
+/// Hash storage behavior for `Entry` — allows zero-cost omission of hash field by default.
+trait HashBehavior {
+    fn equals(&self, h: u64) -> bool;
+    fn set(&mut self, h: u64);
+}
+
+/// Zero-sized default hash storage — no memory or runtime overhead when unused.
+#[derive(Clone, Copy, Default)]
+struct NoHash;
+
+impl HashBehavior for NoHash {
+    #[inline(always)]
+    fn equals(&self, _h: u64) -> bool {
+        // No stored hash; treat as match so code falls back to key comparison.
+        true
+    }
+    #[inline(always)]
+    fn set(&mut self, _h: u64) {}
+}
+
+/// Optional stored hash field — enable when you want hash-based pre-filtering.
+#[derive(Clone, Copy, Default)]
+#[allow(dead_code)]
+struct WithHash(u64);
+
+impl HashBehavior for WithHash {
+    #[inline(always)]
+    fn equals(&self, h: u64) -> bool {
+        self.0 == h
+    }
+    #[inline(always)]
+    fn set(&mut self, h: u64) {
+        self.0 = h;
+    }
+}
+
+/// Entry in a bucket containing optional hash, key, and value.
+/// By default, uses `NoHash` for zero-sized, zero-overhead hash storage.
+struct Entry<K, V, H = NoHash> {
+    hash: H,
     key: MaybeUninit<K>,
     val: MaybeUninit<V>,
 }
 
-impl<K, V> Default for Entry<K, V> {
+impl<K, V, H: Default> Default for Entry<K, V, H> {
     fn default() -> Self {
         Self {
-            hash: 0, // 0 indicates empty slot (no HASH_INIT_FLAG)
+            hash: H::default(),
             key: MaybeUninit::uninit(),
             val: MaybeUninit::uninit(),
         }
@@ -659,12 +696,14 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                             } else {
                                 // Value might have been modified, always create new entry
                                 // (simpler than comparing values which requires PartialEq)
+                                // 重新计算哈希，设置到新条目（NoHash 时为零开销）
+                                let (hash64, _) = self.hash_pair(&key_owned);
                                 let new_entry_ptr = unsafe {
                                     let layout = std::alloc::Layout::new::<Entry<K, V>>();
                                     let ptr = std::alloc::alloc(layout) as *mut Entry<K, V>;
                                     if !ptr.is_null() {
                                         let new_entry = &mut *ptr;
-                                        new_entry.set_hash(entry.hash);
+                                        new_entry.set_hash(hash64);
                                         new_entry.key.as_mut_ptr().write(key_owned);
                                         new_entry.val.as_mut_ptr().write(val_clone);
                                     }
@@ -908,7 +947,9 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                 while marked != 0 {
                     let j = first_marked_byte_index(marked);
                     if let Some(entry) = current.get_entry(j) {
-                        let hash64 = entry.hash;
+                        // 复制过程中从 key 重新计算 hash（NoHash 仍零开销）
+                        let key_ref = unsafe { entry.key.assume_init_ref() };
+                        let (hash64, _) = self.hash_pair(key_ref);
                         // Extract h2 directly from meta instead of recalculating
                         let h2 = ((meta >> (j * 8)) & 0xFF) as u8;
 
@@ -1353,17 +1394,17 @@ impl<K, V> Table<K, V> {
 // ENTRY IMPLEMENTATION
 // ================================================================================================
 
-impl<K, V> Entry<K, V> {
+impl<K, V, H: HashBehavior> Entry<K, V, H> {
     /// Get the actual hash value (without the init flag)
     #[inline(always)]
     fn equal_hash(&self, hash64: u64) -> bool {
-        self.hash == hash64
+        self.hash.equals(hash64)
     }
 
     /// Set the hash with the init flag
     #[inline(always)]
     fn set_hash(&mut self, hash64: u64) {
-        self.hash = hash64
+        self.hash.set(hash64)
     }
 
     /// Safe key access for occupied entries
