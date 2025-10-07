@@ -1,0 +1,48 @@
+[package]
+name = "nodemap_rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["llxisdsh"]
+description = "A high-performance concurrent node hash map implementation in Rust"
+repository = "https://github.com/llxisdsh/nodemap_rs"
+homepage = "https://github.com/llxisdsh/nodemap_rs"
+documentation = "https://docs.rs/nodemap_rs"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+keywords = ["hashmap", "concurrent", "lock-free", "performance", "data-structures"]
+categories = ["data-structures", "concurrency", "algorithms"]
+rust-version = "1.70"
+
+[lib]
+name = "nodemap_rs"
+path = "src/lib.rs"
+
+[features]
+default = ["ahash"]
+ahash = ["dep:ahash"]
+std = []
+
+[dependencies]
+ahash = { version = "0.8", optional = true }
+num_cpus = "1.0"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
+dashmap = "6.0"
+
+# [[bench]]
+# name = "nodemap"
+# harness = false
+
+# [[bench]]
+# name = "throughput_comparison"
+# harness = false
+
+# [[bench]]
+# name = "multi_thread_throughput"
+# harness = false
+
+# [[bench]]
+# name = "drop_init_overhead"
+# harness = false
