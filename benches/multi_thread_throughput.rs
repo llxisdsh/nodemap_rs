@@ -19,8 +19,8 @@ fn benchmark_multi_thread_insert(c: &mut Criterion) {
     //let dashmap = Arc::new(DashMap::new());
     c.bench_function("nodemap_multi_insert", |b| {
         b.iter(|| {
-            //let nodemap = Arc::new(NodeMap::new());
-            let nodemap = Arc::new(SharedNodeMap::new());
+            let nodemap = Arc::new(NodeMap::new());
+            //let nodemap = Arc::new(SharedNodeMap::new());
             let handles: Vec<_> = (0..num_threads)
                 .map(|thread_id| {
                     let nodemap = Arc::clone(&nodemap);

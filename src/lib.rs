@@ -1039,188 +1039,6 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
 }
 
 // ================================================================================================
-// SHARED FLATMAP (SHARDED)
-// ================================================================================================
-
-/// Shared (sharded) NodeMap: fixed-size array of NodeMap shards selected by hashing the key.
-/// The shard count is specified via a const generic parameter `N`.
-/// For convenience, use `SharedNodeMap<K, V, S>` which aliases to 32 shards.
-pub struct NodeMapShared<K, V, S: BuildHasher, const N: usize> {
-    shards: [NodeMap<K, V, S>; N],
-}
-
-/// Default alias using 32 shards
-pub type SharedNodeMap<K, V, S = RandomState> = NodeMapShared<K, V, S, 32>;
-
-impl<K: Eq + Hash + Clone + 'static, V: Clone, const N: usize> NodeMapShared<K, V, RandomState, N> {
-    /// Create a new SharedNodeMap with default hasher per shard.
-    #[inline(always)]
-    pub fn new() -> Self {
-        Self::with_capacity(0)
-    }
-
-    /// Create a new SharedNodeMap with the specified capacity for each shard.
-    #[inline(always)]
-    pub fn with_capacity(size_hint: usize) -> Self {
-        let shards =
-            std::array::from_fn(|_| NodeMap::<K, V, RandomState>::with_capacity(size_hint));
-        Self { shards }
-    }
-}
-
-impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher + Clone, const N: usize>
-    NodeMapShared<K, V, S, N>
-{
-    /// Create a new SharedNodeMap using the provided hasher cloned into each shard.
-    #[inline(always)]
-    pub fn with_hasher(hasher: S) -> Self {
-        Self::with_capacity_and_hasher(0, hasher)
-    }
-
-    /// Create a new SharedNodeMap with specified capacity and hasher for each shard.
-    #[inline(always)]
-    pub fn with_capacity_and_hasher(size_hint: usize, hasher: S) -> Self {
-        let shards = std::array::from_fn(|_| {
-            NodeMap::<K, V, S>::with_capacity_and_hasher(size_hint, hasher.clone())
-        });
-        Self { shards }
-    }
-
-    /// Internal: pick shard index by hashing the key with NodeMap's hash function.
-    #[inline(always)]
-    fn index_for(&self, key: &K) -> usize {
-        let (h64, _h2) = self.shards[0].hash_pair(key);
-        (h64 as usize) % N
-    }
-
-    // ============================================================================================
-    // PUBLIC API WRAPPERS (forced inline)
-    // ============================================================================================
-
-    /// Check whether the given key is present.
-    #[inline(always)]
-    pub fn contains_key(&self, key: &K) -> bool {
-        let i = self.index_for(key);
-        self.shards[i].contains_key(key)
-    }
-
-    /// Get the value associated with the given key as a cloned `V`.
-    #[inline(always)]
-    pub fn get(&self, key: &K) -> Option<V>
-    where
-        V: Clone,
-    {
-        let i = self.index_for(key);
-        self.shards[i].get(key)
-    }
-
-    /// Insert a key-value pair into the shared map.
-    #[inline(always)]
-    pub fn insert(&self, key: K, val: V) -> Option<V>
-    where
-        V: Clone,
-    {
-        let i = self.index_for(&key);
-        self.shards[i].insert(key, val)
-    }
-
-    /// Remove a key-value pair from the shared map.
-    #[inline(always)]
-    pub fn remove(&self, key: K) -> Option<V>
-    where
-        V: Clone,
-    {
-        let i = self.index_for(&key);
-        self.shards[i].remove(key)
-    }
-
-    /// Get or insert with a closure.
-    #[inline(always)]
-    pub fn get_or_insert_with<F: FnOnce() -> V>(&self, key: K, f: F) -> (V, bool)
-    where
-        V: Clone,
-    {
-        let i = self.index_for(&key);
-        self.shards[i].get_or_insert_with(key, f)
-    }
-
-    /// Iterator over all key-value pairs as a Vec-backed iterator.
-    #[inline(always)]
-    pub fn iter(&self) -> std::vec::IntoIter<(K, V)>
-    where
-        K: Clone,
-        V: Clone,
-        S: BuildHasher + Default,
-    {
-        let mut items = Vec::new();
-        for shard in &self.shards {
-            items.extend(shard.into_iter());
-        }
-        items.into_iter()
-    }
-
-    /// Iterator over all keys as a Vec-backed iterator.
-    #[inline(always)]
-    pub fn keys(&self) -> std::vec::IntoIter<K>
-    where
-        K: Clone,
-        V: Clone,
-        S: BuildHasher + Default,
-    {
-        let mut keys = Vec::new();
-        for shard in &self.shards {
-            keys.extend(shard.into_iter().map(|(k, _)| k));
-        }
-        keys.into_iter()
-    }
-
-    /// Iterator over all values as a Vec-backed iterator.
-    #[inline(always)]
-    pub fn values(&self) -> std::vec::IntoIter<V>
-    where
-        K: Clone,
-        V: Clone,
-        S: BuildHasher + Default,
-    {
-        let mut vals = Vec::new();
-        for shard in &self.shards {
-            vals.extend(shard.into_iter().map(|(_, v)| v));
-        }
-        vals.into_iter()
-    }
-
-    /// Total number of pairs across all shards.
-    #[inline(always)]
-    pub fn len(&self) -> usize {
-        self.shards.iter().map(|s| s.len()).sum()
-    }
-
-    /// Returns true if the map contains no elements across all shards.
-    #[inline(always)]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    /// Removes all key-value pairs from all shards.
-    #[inline(always)]
-    pub fn clear(&self) {
-        for shard in &self.shards {
-            shard.clear();
-        }
-    }
-
-    /// Apply a transformation to the value for the given key and return the old value.
-    #[inline(always)]
-    pub fn alter<F>(&self, key: K, f: F) -> Option<V>
-    where
-        F: FnOnce(Option<V>) -> Option<V>,
-    {
-        let i = self.index_for(&key);
-        self.shards[i].alter(key, f)
-    }
-}
-
-// ================================================================================================
 // BUCKET IMPLEMENTATION
 // ================================================================================================
 
@@ -1449,11 +1267,6 @@ impl<K, V> Table<K, V> {
     }
 
     #[inline(always)]
-    fn get_bucket_mut(&self, index: usize) -> &mut Bucket<K, V> {
-        unsafe { &mut *self.buckets().add(index) }
-    }
-
-    #[inline(always)]
     fn get_size_stripe(&self, index: usize) -> &AtomicUsize {
         unsafe { &*self.size().add(index) }
     }
@@ -1589,11 +1402,40 @@ impl<K, V> Entry<K, V> {
 
 impl<K, V, S: BuildHasher> Drop for NodeMap<K, V, S> {
     fn drop(&mut self) {
-        // Clean up the main table
+        // Clean up the main table, reclaiming Entry allocations safely at drop-time.
         if !self.table.buckets().is_null() {
             let buckets_len = self.table.mask() + 1;
 
-            // Clean up linked buckets first
+            // First pass: free all Entry pointers across all bucket chains of the CURRENT table.
+            // We only reclaim entries from the current table to avoid double-freeing pointers
+            // that were moved during resize but still referenced by old tables.
+            for i in 0..buckets_len {
+                unsafe {
+                    let mut b = self.table.get_bucket(i);
+                    loop {
+                        // Free entries in this bucket
+                        for j in 0..ENTRIES_PER_BUCKET {
+                            let eptr = b.entries[j].load(Ordering::Relaxed);
+                            if !eptr.is_null() {
+                                // Drop key/val then deallocate the Entry
+                                std::ptr::drop_in_place(eptr);
+                                let entry_layout = std::alloc::Layout::new::<Entry<K, V>>();
+                                std::alloc::dealloc(eptr as *mut u8, entry_layout);
+                                // Clear pointer to avoid any accidental reuse in this pass
+                                b.entries[j].store(std::ptr::null_mut(), Ordering::Relaxed);
+                            }
+                        }
+
+                        let next_ptr = b.next.load(Ordering::Relaxed);
+                        if next_ptr.is_null() {
+                            break;
+                        }
+                        b = &*next_ptr;
+                    }
+                }
+            }
+
+            // Second pass: free overflow bucket structs for current table
             for i in 0..buckets_len {
                 unsafe {
                     let bucket = self.table.get_bucket(i);
@@ -1609,14 +1451,7 @@ impl<K, V, S: BuildHasher> Drop for NodeMap<K, V, S> {
                 }
             }
 
-            // Drop buckets in place
-            for i in 0..buckets_len {
-                unsafe {
-                    std::ptr::drop_in_place(self.table.get_bucket_mut(i));
-                }
-            }
-
-            // Deallocate buckets memory
+            // Deallocate root buckets array for current table
             unsafe {
                 let buckets_layout =
                     std::alloc::Layout::array::<Bucket<K, V>>(buckets_len).unwrap();
@@ -1624,19 +1459,49 @@ impl<K, V, S: BuildHasher> Drop for NodeMap<K, V, S> {
             }
         }
 
+        // Deallocate size stripes of the current table
         if !self.table.size().is_null() {
             let size_len = self.table.size_mask() as usize + 1;
-
-            // AtomicUsize doesn't need drop_in_place, just deallocate memory
             unsafe {
                 let size_layout = std::alloc::Layout::array::<AtomicUsize>(size_len).unwrap();
                 std::alloc::dealloc(self.table.size() as *mut u8, size_layout);
             }
         }
 
-        // Clean up old tables
+        // Clean up any old tables accumulated during resizes.
+        // We DO NOT free entries here (already freed from current table above).
         unsafe {
             let old_tables = &mut *self.old_tables.get();
+            for t in old_tables.iter() {
+                if !t.buckets().is_null() {
+                    let buckets_len = t.mask() + 1;
+
+                    // Free overflow bucket structs
+                    for i in 0..buckets_len {
+                        let bucket = t.get_bucket(i);
+                        let mut ptr = bucket.next.load(Ordering::Relaxed);
+                        while !ptr.is_null() {
+                            let next_ptr = (*ptr).next.load(Ordering::Relaxed);
+                            std::ptr::drop_in_place(ptr);
+                            let layout = std::alloc::Layout::new::<Bucket<K, V>>();
+                            std::alloc::dealloc(ptr as *mut u8, layout);
+                            ptr = next_ptr;
+                        }
+                    }
+
+                    // Deallocate root buckets array
+                    let buckets_layout =
+                        std::alloc::Layout::array::<Bucket<K, V>>(buckets_len).unwrap();
+                    std::alloc::dealloc(t.buckets() as *mut u8, buckets_layout);
+                }
+
+                if !t.size().is_null() {
+                    let size_len = t.size_mask() as usize + 1;
+                    let size_layout = std::alloc::Layout::array::<AtomicUsize>(size_len).unwrap();
+                    std::alloc::dealloc(t.size() as *mut u8, size_layout);
+                }
+            }
+            // Drop the Box<Table<..>> entries themselves
             old_tables.clear();
         }
     }
@@ -2060,5 +1925,187 @@ where
         } else {
             None
         }
+    }
+}
+
+// ================================================================================================
+// SHARED FLATMAP (SHARDED)
+// ================================================================================================
+
+/// Shared (sharded) NodeMap: fixed-size array of NodeMap shards selected by hashing the key.
+/// The shard count is specified via a const generic parameter `N`.
+/// For convenience, use `SharedNodeMap<K, V, S>` which aliases to 32 shards.
+pub struct NodeMapShared<K, V, S: BuildHasher, const N: usize> {
+    shards: [NodeMap<K, V, S>; N],
+}
+
+/// Default alias using 32 shards
+pub type SharedNodeMap<K, V, S = RandomState> = NodeMapShared<K, V, S, 32>;
+
+impl<K: Eq + Hash + Clone + 'static, V: Clone, const N: usize> NodeMapShared<K, V, RandomState, N> {
+    /// Create a new SharedNodeMap with default hasher per shard.
+    #[inline(always)]
+    pub fn new() -> Self {
+        Self::with_capacity(0)
+    }
+
+    /// Create a new SharedNodeMap with the specified capacity for each shard.
+    #[inline(always)]
+    pub fn with_capacity(size_hint: usize) -> Self {
+        let shards =
+            std::array::from_fn(|_| NodeMap::<K, V, RandomState>::with_capacity(size_hint));
+        Self { shards }
+    }
+}
+
+impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher + Clone, const N: usize>
+    NodeMapShared<K, V, S, N>
+{
+    /// Create a new SharedNodeMap using the provided hasher cloned into each shard.
+    #[inline(always)]
+    pub fn with_hasher(hasher: S) -> Self {
+        Self::with_capacity_and_hasher(0, hasher)
+    }
+
+    /// Create a new SharedNodeMap with specified capacity and hasher for each shard.
+    #[inline(always)]
+    pub fn with_capacity_and_hasher(size_hint: usize, hasher: S) -> Self {
+        let shards = std::array::from_fn(|_| {
+            NodeMap::<K, V, S>::with_capacity_and_hasher(size_hint, hasher.clone())
+        });
+        Self { shards }
+    }
+
+    /// Internal: pick shard index by hashing the key with NodeMap's hash function.
+    #[inline(always)]
+    fn index_for(&self, key: &K) -> usize {
+        let (h64, _h2) = self.shards[0].hash_pair(key);
+        (h64 as usize) % N
+    }
+
+    // ============================================================================================
+    // PUBLIC API WRAPPERS (forced inline)
+    // ============================================================================================
+
+    /// Check whether the given key is present.
+    #[inline(always)]
+    pub fn contains_key(&self, key: &K) -> bool {
+        let i = self.index_for(key);
+        self.shards[i].contains_key(key)
+    }
+
+    /// Get the value associated with the given key as a cloned `V`.
+    #[inline(always)]
+    pub fn get(&self, key: &K) -> Option<V>
+    where
+        V: Clone,
+    {
+        let i = self.index_for(key);
+        self.shards[i].get(key)
+    }
+
+    /// Insert a key-value pair into the shared map.
+    #[inline(always)]
+    pub fn insert(&self, key: K, val: V) -> Option<V>
+    where
+        V: Clone,
+    {
+        let i = self.index_for(&key);
+        self.shards[i].insert(key, val)
+    }
+
+    /// Remove a key-value pair from the shared map.
+    #[inline(always)]
+    pub fn remove(&self, key: K) -> Option<V>
+    where
+        V: Clone,
+    {
+        let i = self.index_for(&key);
+        self.shards[i].remove(key)
+    }
+
+    /// Get or insert with a closure.
+    #[inline(always)]
+    pub fn get_or_insert_with<F: FnOnce() -> V>(&self, key: K, f: F) -> (V, bool)
+    where
+        V: Clone,
+    {
+        let i = self.index_for(&key);
+        self.shards[i].get_or_insert_with(key, f)
+    }
+
+    /// Iterator over all key-value pairs as a Vec-backed iterator.
+    #[inline(always)]
+    pub fn iter(&self) -> std::vec::IntoIter<(K, V)>
+    where
+        K: Clone,
+        V: Clone,
+        S: BuildHasher + Default,
+    {
+        let mut items = Vec::new();
+        for shard in &self.shards {
+            items.extend(shard.into_iter());
+        }
+        items.into_iter()
+    }
+
+    /// Iterator over all keys as a Vec-backed iterator.
+    #[inline(always)]
+    pub fn keys(&self) -> std::vec::IntoIter<K>
+    where
+        K: Clone,
+        V: Clone,
+        S: BuildHasher + Default,
+    {
+        let mut keys = Vec::new();
+        for shard in &self.shards {
+            keys.extend(shard.into_iter().map(|(k, _)| k));
+        }
+        keys.into_iter()
+    }
+
+    /// Iterator over all values as a Vec-backed iterator.
+    #[inline(always)]
+    pub fn values(&self) -> std::vec::IntoIter<V>
+    where
+        K: Clone,
+        V: Clone,
+        S: BuildHasher + Default,
+    {
+        let mut vals = Vec::new();
+        for shard in &self.shards {
+            vals.extend(shard.into_iter().map(|(_, v)| v));
+        }
+        vals.into_iter()
+    }
+
+    /// Total number of pairs across all shards.
+    #[inline(always)]
+    pub fn len(&self) -> usize {
+        self.shards.iter().map(|s| s.len()).sum()
+    }
+
+    /// Returns true if the map contains no elements across all shards.
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Removes all key-value pairs from all shards.
+    #[inline(always)]
+    pub fn clear(&self) {
+        for shard in &self.shards {
+            shard.clear();
+        }
+    }
+
+    /// Apply a transformation to the value for the given key and return the old value.
+    #[inline(always)]
+    pub fn alter<F>(&self, key: K, f: F) -> Option<V>
+    where
+        F: FnOnce(Option<V>) -> Option<V>,
+    {
+        let i = self.index_for(&key);
+        self.shards[i].alter(key, f)
     }
 }
