@@ -1261,7 +1261,7 @@ impl<K, V> Bucket<K, V> {
 
             // Create and store the first entry
             let entry_layout = std::alloc::Layout::new::<Entry<K, V>>();
-            let entry_ptr = std::alloc::alloc_zeroed(entry_layout) as *mut Entry<K, V>;
+            let entry_ptr = std::alloc::alloc(entry_layout) as *mut Entry<K, V>;
             if entry_ptr.is_null() {
                 std::alloc::handle_alloc_error(entry_layout);
             }
@@ -1271,7 +1271,7 @@ impl<K, V> Bucket<K, V> {
             entry.key.as_mut_ptr().write(key);
             entry.val.as_mut_ptr().write(val);
 
-            // Initialize atomic pointer array with null pointers
+            // // Initialize atomic pointer array with null pointers
             // for i in 0..ENTRIES_PER_BUCKET {
             //     std::ptr::write(&mut bucket.entries[i], AtomicPtr::new(std::ptr::null_mut()));
             // }
@@ -1538,12 +1538,6 @@ impl<K, V> Table<K, V> {
 // ================================================================================================
 
 impl<K, V> Entry<K, V> {
-    /// Check if this entry is initialized (occupied)
-    // #[inline(always)]
-    // fn is_occupied(&self) -> bool {
-    //     self.hash != 0
-    // }
-
     /// Get the actual hash value (without the init flag)
     #[inline(always)]
     fn equal_hash(&self, hash64: u64) -> bool {
@@ -1554,12 +1548,6 @@ impl<K, V> Entry<K, V> {
     #[inline(always)]
     fn set_hash(&mut self, hash64: u64) {
         self.hash = hash64
-    }
-
-    /// Clear the entry (mark as unoccupied)
-    #[inline(always)]
-    fn clear(&mut self) {
-        self.hash = 0; // Clear all bits including init flag
     }
 
     /// Safe key access for occupied entries
@@ -1575,51 +1563,6 @@ impl<K, V> Entry<K, V> {
         // debug_assert!(self.is_occupied(), "Entry must be occupied to access value");
         unsafe { self.val.assume_init_ref() }
     }
-    /// Mutable value access for occupied entries (bucket lock required)
-    #[inline(always)]
-    fn get_value_mut(&mut self) -> &mut V {
-        // SAFETY: Caller must hold the bucket op lock to prevent concurrent readers/writers.
-        unsafe { self.val.assume_init_mut() }
-    }
-
-    // /// Safe cloned key access for occupied entries
-    // #[inline(always)]
-    // fn clone_key(&self) -> K
-    // where
-    //     K: Clone,
-    // {
-    //     // debug_assert!(self.is_occupied(), "Entry must be occupied to clone key");
-    //     unsafe { self.key.assume_init_ref().clone() }
-    // }
-
-    /// Safe cloned value access for occupied entries
-    #[inline(always)]
-    fn clone_value(&self) -> V
-    where
-        V: Clone,
-    {
-        // debug_assert!(self.is_occupied(), "Entry must be occupied to clone value");
-        unsafe { self.val.assume_init_ref().clone() }
-    }
-
-    /// Safe cloned key-value pair access for occupied entries
-    // #[inline(always)]
-    // fn clone_key_value(&self) -> (K, V)
-    // where
-    //     K: Clone,
-    //     V: Clone,
-    // {
-    //     // debug_assert!(
-    //     //     self.is_occupied(),
-    //     //     "Entry must be occupied to clone key-value"
-    //     // );
-    //     unsafe {
-    //         (
-    //             self.key.assume_init_ref().clone(),
-    //             self.val.assume_init_ref().clone(),
-    //         )
-    //     }
-    // }
 
     /// Unsafe clone for concurrent access - caller must ensure entry is occupied
     #[inline(always)]
@@ -1634,13 +1577,7 @@ impl<K, V> Entry<K, V> {
         )
     }
 
-    /// Safe entry initialization
-    #[inline(always)]
-    fn init_entry(&mut self, hash: u64, key: K, value: V) {
-        self.set_hash(hash);
-        self.key = MaybeUninit::new(key);
-        self.val = MaybeUninit::new(value);
-    }
+    // removed: init_entry (unused)
 }
 
 // ================================================================================================
