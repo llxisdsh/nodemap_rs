@@ -912,8 +912,8 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                         // Extract h2 directly from meta instead of recalculating
                         let h2 = ((meta >> (j * 8)) & 0xFF) as u8;
 
-                        // Use unsafe clone to avoid double-checking initialization
-                        let (key, val) = unsafe { entry.unsafe_clone_key_value() };
+                        // Reuse existing entry pointer to avoid allocation
+                        let entry_ptr = current.get_entry_ptr(j);
 
                         // Direct insertion into destination bucket (like Go's appendTo loop)
                         let idx = self.h1_mask(hash64, new_table.mask());
@@ -925,24 +925,11 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                             let empty = (!dest_meta) & META_MASK;
 
                             if empty != 0 {
-                                // Found empty slot - create new entry and store pointer
+                                // Found empty slot - store existing pointer and update meta
                                 let empty_idx = first_marked_byte_index(empty);
                                 let new_meta = set_byte(dest_meta, h2, empty_idx);
-
-                                let new_entry_ptr = unsafe {
-                                    let layout = std::alloc::Layout::new::<Entry<K, V>>();
-                                    let ptr = std::alloc::alloc(layout) as *mut Entry<K, V>;
-                                    if !ptr.is_null() {
-                                        let new_entry = &mut *ptr;
-                                        new_entry.set_hash(hash64);
-                                        new_entry.key.as_mut_ptr().write(key);
-                                        new_entry.val.as_mut_ptr().write(val);
-                                    }
-                                    ptr
-                                };
-
                                 // Store pointer first, then update meta (like Go version)
-                                current_dest.set_entry_ptr(empty_idx, new_entry_ptr);
+                                current_dest.set_entry_ptr(empty_idx, entry_ptr);
                                 current_dest.meta.store(new_meta, Ordering::Relaxed);
                                 break 'append_to;
                             }
@@ -950,8 +937,8 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                             // No empty slot, check for next bucket
                             let next_ptr = current_dest.next.load(Ordering::Relaxed);
                             if next_ptr.is_null() {
-                                // Create new overflow bucket
-                                let new_ptr = Bucket::alloc_single(hash64, h2, key, val);
+                                // Create new overflow bucket holding existing pointer
+                                let new_ptr = Bucket::alloc_single_with_ptr(h2, entry_ptr);
                                 current_dest.next.store(new_ptr, Ordering::Relaxed);
                                 break 'append_to;
                             } else {
@@ -1282,6 +1269,22 @@ impl<K, V> Bucket<K, V> {
             // Set meta to mark the first slot as occupied
             std::ptr::write(&mut bucket.meta, AtomicU64::from(set_byte(0, h2, 0)));
 
+            ptr
+        }
+    }
+
+    #[inline(always)]
+    fn alloc_single_with_ptr(h2: u8, entry_ptr: *mut Entry<K, V>) -> *mut Bucket<K, V> {
+        unsafe {
+            let layout = std::alloc::Layout::new::<Bucket<K, V>>();
+            let ptr = std::alloc::alloc_zeroed(layout) as *mut Bucket<K, V>;
+            if ptr.is_null() {
+                std::alloc::handle_alloc_error(layout);
+            }
+
+            let bucket = &mut *ptr;
+            bucket.entries[0].store(entry_ptr, Ordering::Relaxed);
+            std::ptr::write(&mut bucket.meta, AtomicU64::from(set_byte(0, h2, 0)));
             ptr
         }
     }
