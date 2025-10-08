@@ -20,6 +20,7 @@ path = "src/lib.rs"
 [features]
 default = ["ahash"]
 ahash = ["dep:ahash"]
+embedded-hash = []
 std = []
 
 [dependencies]

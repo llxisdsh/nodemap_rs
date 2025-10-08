@@ -72,9 +72,10 @@ trait HashBehavior {
 
 /// Zero-sized default hash storage — no memory or runtime overhead when unused.
 #[derive(Clone, Copy, Default)]
-struct NoHash;
+#[warn(dead_code)]
+struct NoEmbeddedHash;
 
-impl HashBehavior for NoHash {
+impl HashBehavior for NoEmbeddedHash {
     #[inline(always)]
     fn equals(&self, _h: u64) -> bool {
         // No stored hash; treat as match so code falls back to key comparison.
@@ -86,10 +87,10 @@ impl HashBehavior for NoHash {
 
 /// Optional stored hash field — enable when you want hash-based pre-filtering.
 #[derive(Clone, Copy, Default)]
-#[allow(dead_code)]
-struct WithHash(u64);
+#[warn(dead_code)]
+struct EmbeddedHash(u64);
 
-impl HashBehavior for WithHash {
+impl HashBehavior for EmbeddedHash {
     #[inline(always)]
     fn equals(&self, h: u64) -> bool {
         self.0 == h
@@ -100,9 +101,19 @@ impl HashBehavior for WithHash {
     }
 }
 
+/// Default hash behavior type alias based on feature flags.
+/// When `embedded-hash` feature is enabled, uses `EmbeddedHash` for hash-based pre-filtering.
+/// Otherwise, uses `NoEmbeddedHash` for zero-overhead operation.
+#[cfg(feature = "embedded-hash")]
+#[warn(dead_code)]
+pub type DefaultHashBehavior = EmbeddedHash;
+
+#[cfg(not(feature = "embedded-hash"))]
+pub type DefaultHashBehavior = NoEmbeddedHash;
+
 /// Entry in a bucket containing optional hash, key, and value.
-/// By default, uses `NoHash` for zero-sized, zero-overhead hash storage.
-struct Entry<K, V, H = NoHash> {
+/// By default, uses `DefaultHashBehavior` which is conditionally compiled.
+struct Entry<K, V, H = DefaultHashBehavior> {
     hash: H,
     key: MaybeUninit<K>,
     val: MaybeUninit<V>,
