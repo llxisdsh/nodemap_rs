@@ -68,12 +68,13 @@ fn cpu_count() -> usize {
 trait HashBehavior {
     fn equals(&self, h: u64) -> bool;
     fn set(&mut self, h: u64);
+    fn get(&self) -> Option<u64>;
 }
 
 /// Zero-sized default hash storage — no memory or runtime overhead when unused.
 #[derive(Clone, Copy, Default)]
-#[warn(dead_code)]
-struct NoEmbeddedHash;
+#[allow(dead_code)]
+pub struct NoEmbeddedHash;
 
 impl HashBehavior for NoEmbeddedHash {
     #[inline(always)]
@@ -83,12 +84,17 @@ impl HashBehavior for NoEmbeddedHash {
     }
     #[inline(always)]
     fn set(&mut self, _h: u64) {}
+    #[inline(always)]
+    fn get(&self) -> Option<u64> {
+        // No stored hash available
+        None
+    }
 }
 
 /// Optional stored hash field — enable when you want hash-based pre-filtering.
 #[derive(Clone, Copy, Default)]
-#[warn(dead_code)]
-struct EmbeddedHash(u64);
+#[allow(dead_code)]
+pub struct EmbeddedHash(u64);
 
 impl HashBehavior for EmbeddedHash {
     #[inline(always)]
@@ -99,13 +105,16 @@ impl HashBehavior for EmbeddedHash {
     fn set(&mut self, h: u64) {
         self.0 = h;
     }
+    #[inline(always)]
+    fn get(&self) -> Option<u64> {
+        Some(self.0)
+    }
 }
 
 /// Default hash behavior type alias based on feature flags.
 /// When `embedded-hash` feature is enabled, uses `EmbeddedHash` for hash-based pre-filtering.
 /// Otherwise, uses `NoEmbeddedHash` for zero-overhead operation.
 #[cfg(feature = "embedded-hash")]
-#[warn(dead_code)]
 pub type DefaultHashBehavior = EmbeddedHash;
 
 #[cfg(not(feature = "embedded-hash"))]
@@ -338,7 +347,7 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                 let j = first_marked_byte_index(marked);
                 if let Some(e) = b.get_entry(j) {
                     // Copy only hash first to filter out mismatches without cloning key/val
-                    if !e.equal_hash(hash64) {
+                    if !e.hash.equals(hash64) {
                         marked &= marked - 1;
                         continue;
                     }
@@ -528,7 +537,7 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                 while marked != 0 {
                     let slot = first_marked_byte_index(marked);
                     if let Some(entry) = b.get_entry(slot) {
-                        if entry.equal_hash(hash64) {
+                        if entry.hash.equals(hash64) {
                             if entry.get_key() == &key {
                                 found_info = Some((b as *const _ as *mut _, slot));
                                 break 'search_loop;
@@ -568,7 +577,7 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                                 let ptr = std::alloc::alloc(layout) as *mut Entry<K, V>;
                                 if !ptr.is_null() {
                                     let entry = &mut *ptr;
-                                    entry.set_hash(hash64);
+                                    entry.hash.set(hash64);
                                     entry.key.as_mut_ptr().write(key);
                                     entry.val.as_mut_ptr().write(new_v);
                                 }
@@ -614,7 +623,7 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                             let ptr = std::alloc::alloc(layout) as *mut Entry<K, V>;
                             if !ptr.is_null() {
                                 let entry = &mut *ptr;
-                                entry.set_hash(hash64);
+                                entry.hash.set(hash64);
                                 entry.key.as_mut_ptr().write(key);
                                 entry.val.as_mut_ptr().write(new_v);
                             }
@@ -707,14 +716,16 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                             } else {
                                 // Value might have been modified, always create new entry
                                 // (simpler than comparing values which requires PartialEq)
-                                // 重新计算哈希，设置到新条目（NoHash 时为零开销）
-                                let (hash64, _) = self.hash_pair(&key_owned);
+                                let hash64 = entry.hash.get().unwrap_or_else(|| {
+                                    let (hash, _) = self.hash_pair(&key_owned);
+                                    hash
+                                });
                                 let new_entry_ptr = unsafe {
                                     let layout = std::alloc::Layout::new::<Entry<K, V>>();
                                     let ptr = std::alloc::alloc(layout) as *mut Entry<K, V>;
                                     if !ptr.is_null() {
                                         let new_entry = &mut *ptr;
-                                        new_entry.set_hash(hash64);
+                                        new_entry.hash.set(hash64);
                                         new_entry.key.as_mut_ptr().write(key_owned);
                                         new_entry.val.as_mut_ptr().write(val_clone);
                                     }
@@ -958,9 +969,14 @@ impl<K: Eq + Hash + Clone + 'static, V: Clone, S: BuildHasher> NodeMap<K, V, S> 
                 while marked != 0 {
                     let j = first_marked_byte_index(marked);
                     if let Some(entry) = current.get_entry(j) {
-                        // 复制过程中从 key 重新计算 hash（NoHash 仍零开销）
-                        let key_ref = unsafe { entry.key.assume_init_ref() };
-                        let (hash64, _) = self.hash_pair(key_ref);
+                        let hash64 = if let Some(embedded_hash) = entry.hash.get() {
+                            embedded_hash
+                        } else {
+                            // NoEmbeddedHash
+                            let key_ref = unsafe { entry.key.assume_init_ref() };
+                            let (hash, _) = self.hash_pair(key_ref);
+                            hash
+                        };
                         // Extract h2 directly from meta instead of recalculating
                         let h2 = ((meta >> (j * 8)) & 0xFF) as u8;
 
@@ -1124,7 +1140,7 @@ impl<K, V> Bucket<K, V> {
             }
 
             let entry = &mut *entry_ptr;
-            entry.set_hash(hash);
+            entry.hash.set(hash);
             entry.key.as_mut_ptr().write(key);
             entry.val.as_mut_ptr().write(val);
 
@@ -1406,18 +1422,6 @@ impl<K, V> Table<K, V> {
 // ================================================================================================
 
 impl<K, V, H: HashBehavior> Entry<K, V, H> {
-    /// Get the actual hash value (without the init flag)
-    #[inline(always)]
-    fn equal_hash(&self, hash64: u64) -> bool {
-        self.hash.equals(hash64)
-    }
-
-    /// Set the hash with the init flag
-    #[inline(always)]
-    fn set_hash(&mut self, hash64: u64) {
-        self.hash.set(hash64)
-    }
-
     /// Safe key access for occupied entries
     #[inline(always)]
     fn get_key(&self) -> &K {
