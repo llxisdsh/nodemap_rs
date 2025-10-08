@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
-use nodemap_rs::{NodeMap, SharedNodeMap};
+use nodemap_rs::NodeMap;
 use rand::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

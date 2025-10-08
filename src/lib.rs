@@ -222,7 +222,7 @@ impl<K, V> Drop for ResizeState<K, V> {
 }
 
 // ================================================================================================
-// MAIN FLATMAP STRUCTURE
+// MAIN NODEMAP STRUCTURE
 // ================================================================================================
 
 /// High-performance node hash map using per-bucket seqlock
@@ -239,7 +239,7 @@ unsafe impl<K: Send, V: Send, S: Send + BuildHasher> Send for NodeMap<K, V, S> {
 unsafe impl<K: Sync, V: Sync, S: Sync + BuildHasher> Sync for NodeMap<K, V, S> {}
 
 // ================================================================================================
-// FLATMAP CONSTRUCTORS
+// NODEMAP CONSTRUCTORS
 // ================================================================================================
 
 impl<K: Eq + Hash + Clone + 'static, V: Clone> NodeMap<K, V, RandomState> {
@@ -1985,7 +1985,7 @@ where
 }
 
 // ================================================================================================
-// SHARED FLATMAP (SHARDED)
+// SHARED NODEMAP (SHARDED)
 // ================================================================================================
 
 /// Shared (sharded) NodeMap: fixed-size array of NodeMap shards selected by hashing the key.

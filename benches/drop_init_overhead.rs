@@ -1,8 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use dashmap::DashMap;
 use nodemap_rs::NodeMap;
-use std::sync::Arc;
-use std::thread;
 
 fn benchmark_nodemap_init_only(c: &mut Criterion) {
     c.bench_function("nodemap_init_only", |b| {
